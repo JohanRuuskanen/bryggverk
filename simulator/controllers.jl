@@ -13,12 +13,14 @@ function controller_PID!(k, P, I, D, e, u, v, par)
 
 end
 
-function controller_onoff!(k, e, u, par)
+function controller_onoff!(k, e, u, G)
 
     if e[k] > 0
-        u[k] =  1.0
+        u[k] =  G
     else
         u[k] = 0.0
     end
+
+    u[k] = lim(u[k], 0.0, 1.0)
 
 end

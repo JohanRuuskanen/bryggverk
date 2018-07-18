@@ -77,24 +77,27 @@ N = 10
 
 par = params(h, K, Ti, Td, Tv, N)
 
+# Define setpoint
+r = 67 * ones(size(t))
+
+r[1000:1500] = 62
+r[1500:2000] = 70
+r[2000:2500] = 72
+
 # Initial conditions
-x[1, :] = [20, 20]
+x[1, :] = [80, 20]
 y[1, :] = Cd*x[1, :]
-r[1] = 80
 e[1] = r[1] - y[1]
 
 for k = 2:length(t)
 	# Actuate
     x[k, :] = Ad*x[k-1, :] + Bd.*[u[k-1]; 0] + [rand(Normal(0.0, Q)), 0]
-    y[k, :] = round.(Cd*x[k, :], 2, 2) + rand(Normal(0.0, R))
-	
-	r[k] = r[k-1]	
-
+    y[k, :] = round.(Cd*x[k, :] + rand(Normal(0.0, R)), 2, 2)
 	# Control
     e[k] = r[k] - y[k] 
     
     #controller_PID!(k, P, I, D, e, u, v, par)
-    controller_onoff!(k, e, u, par)
+    controller_onoff!(k, e, u, 1.0)
     
 end
 
@@ -116,5 +119,8 @@ plot(t, P, "k--")
 plot(t, I, "k:")
 plot(t, D, "k-.")
 plot(t, v, "r")
+plot(t, 1*ones(size(t)), "k--")
+plot(t, 0*ones(size(t)), "k--")
+ylim([-0.1, 1.1])
 title("Control signal")
 legend(["u", "P", "I", "D",  "v"])
