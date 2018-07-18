@@ -1,28 +1,26 @@
 using PyPlot
+using Distributions
 using ControlSystems
 
-function sim_sys(sys, u=NaN, t=linspace(0, 3600, 10000), x0=[100, 20])
-	if length(u) == 1	
-		if isnan(u)
-			u = zeros(length(t))
-		end
-	end
-	lsimplot(sys, u, t, x0)
-end
+include("misc.jl")
+include("controllers.jl")
 
-"Constants"
+"""
+Define constants and set up continuous state-space representation
+"""
+# Constants
 m = 50
 V = m * 10^-3.0
 C = 4.2e3
 T0 = 20
 
-"Heating constants"
+# Heating constants
 Ah = 1 #Adhoc, we transfer 24 KW to the tank 
 Hh = 24e3
 
 Dh = Ah*Hh
 
-"Heat loss constants"
+# Heat loss constants
 r = 0.2  #Adhoc, measure the size of the tank
 h = 0.4
 
@@ -32,6 +30,7 @@ Htop = 1e3
 Asteel = pi*r^2 + pi*2*r*h
 Hsteel = 5
 
+# Set up state space equations using law of thermodynamics
 Dl = Atop*Htop + Asteel*Hsteel
 
 A = [-Dl/(m*C) Dl/(m*C); 0 0]
@@ -41,9 +40,14 @@ D = [0]
 
 sys = ss(A, B, C, D)
 
-"Simulating the arduino actuation"
+"""
+Simulating the arduino actuation
+"""
+# Set parameters and discretize the system
 Te = 3600
 h = 1
+Q = 0.01
+R = 0.1
 
 sysd = c2d(sys, h)
 
@@ -52,6 +56,7 @@ Bd = sysd[1].B
 Cd = C
 Dd = D
 
+# Create vectors to store information
 t = collect(0:h:Te)
 v = zeros(size(t))
 P = zeros(size(t))
@@ -63,47 +68,37 @@ y = zeros(size(t))
 r = zeros(size(t))
 e = zeros(size(t))
 
-K = 1/1000
-Ti = 100
+# PID params
+K = 1/50
+Ti = 1000
 Td = 1/100
 Tv = sqrt(Ti*Td)
 N = 10
 
-x[1, :] = [80, 20]
+par = params(h, K, Ti, Td, Tv, N)
+
+# Initial conditions
+x[1, :] = [20, 20]
 y[1, :] = Cd*x[1, :]
-r[1] = 67
+r[1] = 80
 e[1] = r[1] - y[1]
 
-function lim(x, l, u)
-	y = x
-	if y > u
-		y = u
-	elseif y < l
-		y = l
-	end
-	return y	
-end	
-
 for k = 2:length(t)
-
-	"Actuate"
-	x[k, :] = Ad*x[k-1, :] + Bd.*[u[k-1]; 0]
-	y[k, :] = round.(Cd*x[k, :], 2, 2)
+	# Actuate
+    x[k, :] = Ad*x[k-1, :] + Bd.*[u[k-1]; 0] + [rand(Normal(0.0, Q)), 0]
+    y[k, :] = round.(Cd*x[k, :], 2, 2) + rand(Normal(0.0, R))
 	
 	r[k] = r[k-1]	
-	
 
-	"Controller"
-	e[k] = r[k] - y[k] 
-	P[k] = K * e[k]
-	I[k] = I[k-1] + K*h/Ti*e[k] + 1/Tv*h*(u[k-1] - v[k-1])
-	D[k] = Td/(Td + N*h) * D[k-1] - K*Td*N/(Td + N*h) * (y[k] - y[k-1]) 
-
-
-
-	v[k] = P[k] + I[k] + D[k]
-	u[k] = lim(v[k], 0.0, 1.0)
+	# Control
+    e[k] = r[k] - y[k] 
+    
+    #controller_PID!(k, P, I, D, e, u, v, par)
+    controller_onoff!(k, e, u, par)
+    
 end
+
+# Plot results
 
 figure(1)
 clf()
@@ -123,4 +118,3 @@ plot(t, D, "k-.")
 plot(t, v, "r")
 title("Control signal")
 legend(["u", "P", "I", "D",  "v"])
-
