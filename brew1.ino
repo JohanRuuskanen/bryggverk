@@ -69,7 +69,7 @@ const uint32_t ssrPwmPeriod = 2000;
 uint8_t state = 1;
 uint8_t lastState = 5;
 bool lcdWasFlashed = false;
-bool runTempReg = false;
+//bool runTempReg = false;
 double settemp = 0;
 bool enableSettempControl = true;
 bool enableDirectPumpControl = true;
@@ -78,7 +78,7 @@ int8_t pumpPercentage = 0;
 uint8_t defaultMashingPumpPercentage = 50;
 bool pumpIsOn = false;
 int8_t power = 0;
-bool a = 0;
+bool a = 0; //is for displaying a blinking 1 to let user know temp reg function is running as intended
 unsigned long regTimer = 500;
 unsigned long regLastMillis = 0;
 
@@ -313,10 +313,9 @@ void runTempReg() {
 
     regLastMillis = currentMillis;
     a = !a;
+    lcd.setCursor(19, 2);
+    lcd.print(a);
   }
-  lcd.setCursor(19, 2);
-  lcd.print(a);
-
   else {
     lcd.setCursor(19, 2);
     lcd.print(' ');
