@@ -3,8 +3,12 @@
    * Print to screen if temp values are weird
    * Over temp protection
    * Shift to lcdPrint() or Johnnys fancy solution
+   * Fix extra % when in boil/power mode
+   * Output relevant info when booting (temptimer, PID params, SSR period)
+   * Add proper csv logging (state, pwm, temp1, temp2, time?)
+   * Insert windup/down for pump on/off
    * 
-   */
+*/
   #include <Encoder.h>
   #include <Bounce2.h>
   #include <Wire.h>
@@ -62,6 +66,7 @@
   unsigned long currentMillis = 0;
   unsigned long tempLastMillis = 0;
   unsigned int tempTimer = 1000; //cannot be smaller than 187 for 10 bit resoliton on sensors
+  unsigned int logTimer = 10000;
   double probe01Temp = 0;
   double probe02Temp = 0;
   const uint32_t ssrPwmPeriod = 1000;
@@ -142,8 +147,9 @@
   // Pass our oneWire reference to Dallas Temperature.
   DallasTemperature sensors(&oneWire);
   //Specific adresses
-  DeviceAddress probe01Address = { 0x28, 0xFF, 0x94, 0x19, 0xA2, 0x17, 0x04, 0x11 };
-  DeviceAddress probe02Address = { 0x28, 0xFF, 0x8A, 0x61, 0xA0, 0x17, 0x05, 0x6A };
+  DeviceAddress probe01Address = { 0x28, 0x47, 0x67, 0xFB, 0x08, 0x00, 0x00, 0x6E };
+  DeviceAddress probe02Address = { 0x28, 0xBA, 0x16, 0xB8, 0x09, 0x00, 0x00, 0x35 };
+
   
   //Setup LCD screen on I2C
   LiquidCrystal_I2C lcd(0x3F,20,4); // set the LCD address to 0x27 for a 16 chars and 2 line display
@@ -210,13 +216,13 @@
     }
   
     if ( button1Diff != 0 && button1Diff < 500) {
-      Serial.println("Button 1 short press");
+      //Serial.println("Button 1 short press");
       button1ShortPressDetected = true;
       button1Diff = 0;
       button1RoseMillis = 0;
     }
     else if (button1RoseMillis + 1000 >= currentMillis-10 && button1RoseMillis + 1000 <= currentMillis+10 && digitalRead(ENCODER_1_BUTTON_PIN)) {
-      Serial.println("Button 1 long press");
+      //Serial.println("Button 1 long press");
       button1LongPressDetected = true;
       button1RoseMillis = 0;
     }
@@ -230,13 +236,13 @@
     }
   
     if ( button2Diff != 0 && button2Diff < 500) {
-      Serial.println("Button 2 short press");
+      //Serial.println("Button 2 short press");
       button2ShortPressDetected = true;
       button2Diff = 0;
       button2RoseMillis = 0;
     }
     else if (button2RoseMillis + 1000 >= currentMillis-10 && button2RoseMillis + 1000 <= currentMillis+10 && digitalRead(ENCODER_2_BUTTON_PIN)) {
-      Serial.println("Button 2 long press");
+      //Serial.println("Button 2 long press");
       button2LongPressDetected = true;
       button2RoseMillis = 0;
     }
@@ -287,12 +293,13 @@
     L2.updateSSR();
     L3.updateSSR();
   }
+
   
   void runTempReg() {
     if (currentMillis - regLastMillis >= regTimer){
       //Sanity check for temp values
-      if (!probe01Temp > 90 || !probe01Temp < 2 || !probe02Temp > 90 || !probe02Temp < 2) {
-        y = (probe01Temp + probe02Temp) / 2; // Lazy sensor fusion
+      if (!probe01Temp > 101 || !probe01Temp < 1 || !probe02Temp > 101 || !probe02Temp < 1) {
+        y = probe01Temp;
         e = settemp - y;
     
         if (e>5) {u=1;}
@@ -317,6 +324,8 @@
           u = v;
         }
         */
+        
+        
         //Write to SSRs
         setAllDutCycles(u);
         //Blink a 1 on screen to tell user reg is active
@@ -558,13 +567,14 @@
           lcd.print("0% ");
           lcdWasFlashed = true;
           }
-  
+
+          enablePumpUI();
           if (actPosition1 != oldActPosition1) {
             if(actPosition1 - oldActPosition1 < 0 && power > 0) power-=10;
             else if(actPosition1 - oldActPosition1 > 0 && power < 100) power+=10;
             lcd.setCursor(7, 2);
             lcd.print(power);
-            lcd.print("%   ");       
+            lcd.print("%     ");       
           }
           setAllDutCycles((double)power/100);
   
@@ -615,10 +625,7 @@
     Long press = N/A (unless in mashing state)
   
   
-  
-  
-  
-  
+ 
   
   
   
