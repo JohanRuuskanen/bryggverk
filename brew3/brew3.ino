@@ -5,10 +5,16 @@
    * Shift to lcdPrint() or Johnnys fancy solution
    * Fix extra % when in boil/power mode
    * Output relevant info when booting (temptimer, PID params, SSR period)
-   * Add proper csv logging (state, pwm, temp1, temp2, time?)
+   * Add proper csv logging (state, settemp, temp1, temp2, eclosure temp e, output, pwm, timer)
    * Insert windup/down for pump on/off
+   * Add log timer
+   * Add enclosure overtemp functionality via newold sensors
+   * Better overall error handling
+   * Minimum pump pwm is 20
+   * 
    * 
 */
+
   #include <Encoder.h>
   #include <Bounce2.h>
   #include <Wire.h>
@@ -40,48 +46,53 @@
   
   
   //////////////// GLOBAL VARIABLES ////////////////
-  long oldPosition1 = 0;
-  long newPosition1 = 0;
-  long actPosition1 = 0;
-  long oldActPosition1 = 0;
-  long oldPosition2 = 0;
-  long newPosition2 = 0;
-  long actPosition2 = 0;
-  long oldActPosition2 = 0;
+  //Setttings
+  const uint32_t ssrPwmPeriod = 1000;
+  unsigned int tempTimer = 1000; //cannot be smaller than 187 for 10 bit resoliton on sensors
+  unsigned int logTimer = 10000;
+  uint8_t defaultMashingPumpPercentage = 50;
+
   
-  unsigned long button1LastMillis = 0;
-  unsigned long button1RoseMillis = 0;
-  unsigned long button1FellMillis = 0;
-  unsigned long button1Diff = 0;
+  long oldPosition1;
+  long newPosition1;
+  long actPosition1;
+  long oldActPosition1;
+  long oldPosition2;
+  long newPosition2;
+  long actPosition2;
+  long oldActPosition2;
+  
+  unsigned long button1LastMillis;
+  unsigned long button1RoseMillis;
+  unsigned long button1FellMillis;
+  unsigned long button1Diff;
   bool button1ShortPressDetected = false;
   bool button1LongPressDetected = false;
   
-  unsigned long button2LastMillis = 0;
-  unsigned long button2RoseMillis = 0;
-  unsigned long button2FellMillis = 0;
-  unsigned long button2Diff = 0;
+  unsigned long button2LastMillis;
+  unsigned long button2RoseMillis;
+  unsigned long button2FellMillis;
+  unsigned long button2Diff;
   bool button2ShortPressDetected = false;
   bool button2LongPressDetected = false;
   
-  unsigned long currentMillis = 0;
-  unsigned long tempLastMillis = 0;
-  unsigned int tempTimer = 1000; //cannot be smaller than 187 for 10 bit resoliton on sensors
-  unsigned int logTimer = 10000;
-  double probe01Temp = 0;
-  double probe02Temp = 0;
-  const uint32_t ssrPwmPeriod = 1000;
+  unsigned long currentMillis;
+  unsigned long tempLastMillis;
+  unsigned long logLastMillis;
+  double probe01Temp;
+  double probe02Temp;
+  double probe03Temp;
   
-  uint8_t state = 0;
+  uint8_t state;
   bool lcdWasFlashed = false;
   //bool runTempReg = false;
-  double settemp = 0;
+  double settemp = 67;
   bool enableSettempControl = true;
   bool enableDirectPumpControl = true;
-  uint8_t pumpPWM = 0;
-  int8_t pumpPercentage = 0;
-  uint8_t defaultMashingPumpPercentage = 50;
+  uint8_t pumpPWM;
+  int8_t pumpPercentage;
   bool pumpIsOn = false;
-  int8_t power = 0;
+  int8_t power;
   bool a = 0; //is for displaying a blinking 1 to let user know temp reg function is running as intended
   unsigned long regTimer = 500;
   unsigned long regLastMillis = 0;
@@ -149,7 +160,7 @@
   //Specific adresses
   DeviceAddress probe01Address = { 0x28, 0x47, 0x67, 0xFB, 0x08, 0x00, 0x00, 0x6E };
   DeviceAddress probe02Address = { 0x28, 0xBA, 0x16, 0xB8, 0x09, 0x00, 0x00, 0x35 };
-
+  DeviceAddress probe03Address = { 0x28, 0xFF, 0x8A, 0x61, 0xA0, 0x17, 0x05, 0x6A };
   
   //Setup LCD screen on I2C
   LiquidCrystal_I2C lcd(0x3F,20,4); // set the LCD address to 0x27 for a 16 chars and 2 line display
@@ -167,216 +178,7 @@
   SSR_Control L3(L3_SSR_PIN, ssrPwmPeriod);
   
   
-  //////////////// FUNCTIONS ////////////////
-  
-  double getTemperature(DeviceAddress deviceAddress){
-    double tempC = sensors.getTempC(deviceAddress);
-    if (tempC == -127.00) {
-      Serial.print("Error getting temperature");
-    }
-    else {
-      return tempC;
-    }
-  
-  }
-  
-  void updateEncoders() {
-    //Encoder 1
-    newPosition1 = encoder1.read();
-    oldActPosition1 = actPosition1;
-    if (newPosition1 >= oldPosition1 + 4) {
-      actPosition1++;
-      oldPosition1 = newPosition1;
-    }
-    else if (newPosition1 <= oldPosition1 - 4) {
-      actPosition1--;
-      oldPosition1 = newPosition1;
-    }
-  
-    //Encoder 2
-    newPosition2 = encoder2.read();
-    oldActPosition2 = actPosition2;
-    if (newPosition2 >= oldPosition2 + 4) {
-      actPosition2++;
-      oldPosition2 = newPosition2;
-    }
-    else if (newPosition2 <= oldPosition2 - 4) {
-      oldActPosition2 = actPosition2;
-      actPosition2--;
-      oldPosition2 = newPosition2;
-    }
-  
-    //Button 1
-    if (debounced1.rose()) {
-      button1RoseMillis = currentMillis;
-    }
-    if (debounced1.fell()) {
-      button1FellMillis = currentMillis;
-      button1Diff = button1FellMillis - button1RoseMillis;
-    }
-  
-    if ( button1Diff != 0 && button1Diff < 500) {
-      //Serial.println("Button 1 short press");
-      button1ShortPressDetected = true;
-      button1Diff = 0;
-      button1RoseMillis = 0;
-    }
-    else if (button1RoseMillis + 1000 >= currentMillis-10 && button1RoseMillis + 1000 <= currentMillis+10 && digitalRead(ENCODER_1_BUTTON_PIN)) {
-      //Serial.println("Button 1 long press");
-      button1LongPressDetected = true;
-      button1RoseMillis = 0;
-    }
-    //Button 2
-    if (debounced2.rose()) {
-      button2RoseMillis = currentMillis;
-    }
-    if (debounced2.fell()) {
-      button2FellMillis = currentMillis;
-      button2Diff = button2FellMillis - button2RoseMillis;
-    }
-  
-    if ( button2Diff != 0 && button2Diff < 500) {
-      //Serial.println("Button 2 short press");
-      button2ShortPressDetected = true;
-      button2Diff = 0;
-      button2RoseMillis = 0;
-    }
-    else if (button2RoseMillis + 1000 >= currentMillis-10 && button2RoseMillis + 1000 <= currentMillis+10 && digitalRead(ENCODER_2_BUTTON_PIN)) {
-      //Serial.println("Button 2 long press");
-      button2LongPressDetected = true;
-      button2RoseMillis = 0;
-    }
-  
-  }
-  
-  void lcdPrint(int row, int col, String text) {
-    lcd.setCursor(col, row);
-    lcd.print(text);
-  }
-  
-  void ClearLcdForNewState() {
-    lcd.setCursor(6, 0);
-    //Write 14 empty spaces as chars
-    for (int i=0 ; i<14 ; i++) {
-      lcd.print(' ');
-    }
-  }
-  
-  void ClearLcdRow(int row) {
-    lcd.setCursor(0, row);
-    //Write 20 empty spaces as chars
-    for (int i=0 ; i<20 ; i++) {
-      lcd.print(' ');
-    }
-  }
-  
-  void ProgressStateChecker() {
-    if (button1ShortPressDetected) {
-      button1ShortPressDetected = false;
-      state++;
-      power = 0;
-      setAllDutCycles(0);
-      if (state > BOIL_STATE) {state=0;}
-      lcdWasFlashed = false;
-    }
-  }
-  
-  void setAllDutCycles(double duty){
-    //Serial.println(duty);
-    L1.setDutyCycle(duty);
-    L2.setDutyCycle(duty);
-    L3.setDutyCycle(duty);  
-  }
-  
-  void updateAllSSR() {
-    L1.updateSSR();
-    L2.updateSSR();
-    L3.updateSSR();
-  }
 
-  
-  void runTempReg() {
-    if (currentMillis - regLastMillis >= regTimer){
-      //Sanity check for temp values
-      if (!probe01Temp > 101 || !probe01Temp < 1 || !probe02Temp > 101 || !probe02Temp < 1) {
-        y = probe01Temp;
-        e = settemp - y;
-    
-        if (e>5) {u=1;}
-        else if(e>0) {u=0.5;}
-        else {u=0;}
-  
-        //MAGIC PID FUCKERY LIES HERE
-        /*
-        //TODO: INSERT ANTI-WINDUP
-        P = KP*e;
-        I = I + KI*regTimer*e;
-    
-        // Create unbounded control signal
-        v = P + I;
-    
-        // Create truncated control signal
-        if (v > 1.0) {
-          u = 1.0;
-        } else if (v < 0.0) {
-          u = 0.0;
-        } else {
-          u = v;
-        }
-        */
-        
-        
-        //Write to SSRs
-        setAllDutCycles(u);
-        //Blink a 1 on screen to tell user reg is active
-        a = !a;
-        lcd.setCursor(19, 2);
-        lcd.print(a); 
-        regLastMillis = currentMillis;   
-      }
-      else {
-        Serial.println("Error in temp probe values");
-        Serial.println(probe01Temp);
-        Serial.println(probe02Temp);
-      }
-  
-    }
-    else {
-      lcd.setCursor(19, 2);
-      lcd.print(' ');
-    }
-  }
-  
-  void enableTempUI() {
-    if (actPosition1 != oldActPosition1) {
-      if(actPosition1 - oldActPosition1 < 0 && settemp > 0) settemp-=1;
-      else if(actPosition1 - oldActPosition1 > 0 && settemp < 100) settemp+=1;
-      lcd.setCursor(9, 2);
-      lcd.print(settemp, 1);
-      lcd.print("C   ");
-    }
-  }
-  
-  void enablePumpUI() {
-      //Update pumpPercentage to encoder2 position. Constained to between 0 & 100 and encoder fix.
-      if (actPosition2 != oldActPosition2) {
-        if(actPosition2 - oldActPosition2 < 0 && pumpPercentage > 0) pumpPercentage-=10;
-        else if(actPosition2 - oldActPosition2 > 0 && pumpPercentage < 100) pumpPercentage+=10;
-        lcd.setCursor(6, 3);
-        lcd.print(pumpPercentage);
-        lcd.print("%   ");
-      }
-      if (button2ShortPressDetected) {
-        button2ShortPressDetected = false;
-        pumpIsOn = !pumpIsOn;
-      }
-  
-    if (pumpIsOn) {analogWrite(PUMP_PIN, map(pumpPercentage, 0, 100, 0, 255));}
-    else {analogWrite(PUMP_PIN, 0);}
-  }
-  
-  
-  
   
   
   //////////////// SETUP ////////////////
@@ -408,6 +210,22 @@
   
     Serial.print("Number of Devices found on oneWire bus = ");
     Serial.println(sensors.getDeviceCount());
+
+    Serial.print("state");   
+    Serial.print(",\t");
+    Serial.print("settemp");
+    Serial.print(",\t");
+    Serial.print("probe01Temp");
+    Serial.print(",\t");
+    Serial.print("probe02Temp");
+    Serial.print(",\t");
+    Serial.print("enclosureTemp");
+    Serial.print(",\t");
+    Serial.print("e");
+    Serial.print(",\t");
+    Serial.print("u");
+    Serial.print(",\t");
+    Serial.println("pumpPWM");
   
     lcd.setCursor(0, 0);
     // lcdprint(row, col, text)
@@ -433,24 +251,6 @@
     lcd.setCursor(6, 3);
     lcd.print("0%");
   
-    /*
-    LCD example 20x4
-    --------------------
-    State: Standby
-    T1: 20.7C   T2:21.1C
-    Settemp: 67C
-    Pump: 0%
-    --------------------
-  
-    --------------------
-    State: Standby
-    T1: 20.7C   T2:21.1C
-    Power: 60%
-    Pump: default
-    --------------------
-  
-    */
-  
     delay(1000);
   }//end setup
   
@@ -465,11 +265,6 @@
   
       probe01Temp = getTemperature(probe01Address);
       probe02Temp = getTemperature(probe02Address);
-      // Lägg in felhantering för knäppa värden så att man inte reglerar mot det
-  
-      Serial.print(probe01Temp);
-      Serial.print("\t");
-      Serial.println(probe02Temp);
   
       lcd.setCursor(4, 1);
       lcd.print(probe01Temp, 1);
@@ -481,8 +276,30 @@
       lcd.print(' ');
       sensors.requestTemperatures();
     }//temp read and control timer
-  
-  
+
+    //Log timer
+    if (currentMillis - logLastMillis >= logTimer) {
+      logLastMillis = currentMillis;
+
+      //Add proper csv logging (state, settemp, temp1, temp2, eclosure temp e, output, pwm, timer)
+      Serial.print(state);   
+      Serial.print(",\t");
+      Serial.print(settemp);
+      Serial.print(",\t");
+      Serial.print(probe01Temp);
+      Serial.print(",\t");
+      Serial.print(probe02Temp);
+      Serial.print(",\t");
+      Serial.print(probe03Temp);
+      Serial.print(",\t");
+      Serial.print(e);
+      Serial.print(",\t");
+      Serial.print(u);
+      Serial.print(",\t");
+      Serial.println(pumpPWM);
+        
+    }
+    
     //Main switch
     switch (state) {
       case STANDBY_STATE:
@@ -540,7 +357,7 @@
           lcd.print("MASHING");
           lcd.setCursor(6, 3);
           lcd.print(defaultMashingPumpPercentage);
-          lcd.print('%');
+          lcd.print("%   ");
           lcdWasFlashed = true;
         }
         
@@ -564,11 +381,10 @@
           lcd.print(power);
           lcd.print("% ");
           lcd.setCursor(6, 3);
-          lcd.print("0% ");
+          lcd.print("0%   ");
           lcdWasFlashed = true;
           }
-
-          enablePumpUI();
+  
           if (actPosition1 != oldActPosition1) {
             if(actPosition1 - oldActPosition1 < 0 && power > 0) power-=10;
             else if(actPosition1 - oldActPosition1 > 0 && power < 100) power+=10;
@@ -577,7 +393,8 @@
             lcd.print("%     ");       
           }
           setAllDutCycles((double)power/100);
-  
+
+          enablePumpUI();
           break;
     }//end switch
     //if new states are added, ProgressStateChecker function must be updated
@@ -593,41 +410,3 @@
   
   
   
-  /* PSEUDO CODE INBOUND
-  
-  
-  STANDBY
-    Actuate Encoder1 = change settemp
-    Long press = N/A
-    Short press = next state
-  WATER HEATING
-    Actuate Encoder1 = change settemp
-    Long press = Start temp reg, Encoder1 is now off
-    Long press again = stop temp reg, Encoder1 is no on
-    Short press = next state
-  MASHING
-    Pump is now on by default at default mashing pwm
-    Long press = Pump power can now be directly set via Encoder2 FUCK THIS
-    Long press again = pump power can no longer be set.
-    Short press = next state
-  BOIL
-    Actuate Encoder1 = changes power (heater is still off)
-    Long press = start heater at specified power level. Encoder1 now changes power directly
-    Long press again = stop heater
-    Short press = go to Standby
-  
-  ---------
-  
-  PUMP LOOP
-    Actuate Encoder2 = changes pump power
-    Short press = pump starts at pump power
-    Short press again = pump stops
-    Long press = N/A (unless in mashing state)
-  
-  
- 
-  
-  
-  
-  
-   */
