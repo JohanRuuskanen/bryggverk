@@ -1,28 +1,26 @@
 
-struct params
-    h::Float64
-    K::Float64
-    Ti::Float64
-    Td::Float64
-    Tv::Float64
-    N::Float64
+struct ss
+    A::AbstractArray{Float64,2}
+    B::AbstractArray{Float64,2}
+    C::AbstractArray{Float64,2}
 end
 
-function lim(x, l, u)
-	y = x
-	if y > u
-		y = u
-	elseif y < l
-		y = l
-	end
-	return y	
-end	
+struct ssd
+    F::AbstractArray{Float64,2}
+    G::AbstractArray{Float64,2}
+    H::AbstractArray{Float64,2}
+end
 
-function sim_sys(sys, u=NaN, t=linspace(0, 3600, 10000), x0=[100, 20])
-	if length(u) == 1	
-		if isnan(u)
-			u = zeros(length(t))
-		end
-	end
-	lsimplot(sys, u, t, x0)
+struct control_opt
+    controller::Function
+    r::Function
+    h::Float64
+end
+
+@with_kw mutable struct sim_data
+    T::AbstractArray{Float64,1} = zeros(1)
+    x::AbstractArray{Float64,2} = zeros(1,1)
+    y::AbstractArray{Float64,2} = zeros(1,1)
+    e::AbstractArray{Float64,2} = zeros(1,1)
+    u::AbstractArray{Float64,2} = zeros(1,1)
 end
