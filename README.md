@@ -5,7 +5,7 @@ https://www.digikey.se/product-detail/en/UA-20PMFP-LC7001/1754-1129-ND/7102733/?
 
 
 **General to-do:**
-- [ ] Add relevant variables on screen at startup (default pump pwm, pwm period for AC, etc)
+- [x] Add relevant code info on startup: name, date flashed etc
+- [x] Make the "Mash-in"-state do nothing, same as the "Stand-by"-state.
 - [ ] Start a naming convention for code versions
-- [ ] Add relevant code info on startup: name, date flashed etc
-- [ ] Make the "Mash-in"-state do nothing, same as the "Stand-by"-state.
+- [ ] Add leds on screen enclosure for easy visibility of pump and AC power.
