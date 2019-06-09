@@ -3,7 +3,7 @@
   double getTemperature(DeviceAddress deviceAddress){
     double tempC = sensors.getTempC(deviceAddress);
     if (tempC == -127.00) {
-      Serial.print("Error getting temperature");
+      Serial.println("Error getting temperature");
     }
     else {
       return tempC;
@@ -80,7 +80,7 @@
   
   }
   
-  void lcdPrint(int row, int col, String text) {
+  void LcdPrint(int row, int col, String text) {
     lcd.setCursor(col, row);
     lcd.print(text);
   }
@@ -106,13 +106,13 @@
       button1ShortPressDetected = false;
       state++;
       power = 0;
-      setAllDutCycles(0);
+      SetAllDutCycles(0);
       if (state > BOIL_STATE) {state=0;}
       lcdWasFlashed = false;
     }
   }
   
-  void setAllDutCycles(double duty){
+  void SetAllDutCycles(double duty){
     //Serial.println(duty);
     L1.setDutyCycle(duty);
     L2.setDutyCycle(duty);
@@ -132,7 +132,7 @@
         y = probe01Temp;
         e = settemp - y;
     
-        if (e>5) {u=1;}
+        if (e>2) {u=1;}
         else if(e>0) {u=0.5;}
         else {u=0;}
   
@@ -157,7 +157,7 @@
         
         
         //Write to SSRs
-        setAllDutCycles(u);
+        SetAllDutCycles(u);
         //Blink a 1 on screen to tell user reg is active
         a = !a;
         lcd.setCursor(19, 2);
