@@ -9,3 +9,7 @@ https://www.digikey.se/product-detail/en/UA-20PMFP-LC7001/1754-1129-ND/7102733/?
 - [x] Make the "Mash-in"-state do nothing, same as the "Stand-by"-state.
 - [ ] Start a naming convention for code versions
 - [ ] Add leds on screen enclosure for easy visibility of pump and AC power.
+- [ ] Shift to lcdPrint() or Johnnys fancy solution
+- [ ] Insert windup/down for pump on/off
+- [ ] Better overall error handling
+- [ ] Minimum pump pwm is 20?
