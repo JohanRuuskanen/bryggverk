@@ -1,14 +1,8 @@
 /*
    * TO DO:
    * Print to screen if temp values are weird
-   * Over temp protection
    * Shift to lcdPrint() or Johnnys fancy solution
-   * Fix extra % when in boil/power mode
-   * Output relevant info when booting (temptimer, PID params, SSR period)
-   * Add proper csv logging (state, settemp, temp1, temp2, eclosure temp e, output, pwm, timer)
    * Insert windup/down for pump on/off
-   * Add log timer
-   * Add enclosure overtemp functionality via newold sensors
    * Better overall error handling
    * Minimum pump pwm is 20
    * 
@@ -38,7 +32,7 @@
   //States
   #define STANDBY_STATE 0
   #define WATER_HEATING_STATE 1
-  #define MASH_IN_STATE 2
+  #define PAUSE_STATE 2
   #define MASHING_STATE 3
   #define BOIL_STATE 4
   
@@ -46,13 +40,32 @@
   
   
   //////////////// GLOBAL VARIABLES ////////////////
-  //Setttings
+  //Settings
   const uint32_t ssrPwmPeriod = 1000;
   unsigned int tempTimer = 1000; //cannot be smaller than 187 for 10 bit resoliton on sensors
   unsigned int logTimer = 10000;
   uint8_t defaultMashingPumpPercentage = 50;
+  uint8_t enclosureOvertemp = 65;
 
-  
+  //General vars
+  uint8_t state;
+  bool lcdWasFlashed = false;
+  //bool runTempReg = false;
+  double settemp = 67;
+  bool enableSettempControl = true;
+  bool enableDirectPumpControl = true;
+  uint8_t pumpPWM;
+  int8_t pumpPercentage;
+  bool pumpIsOn = false;
+  int8_t power;
+  bool a = 0; //is for displaying a blinking 1 to let user know temp reg function is running as intended
+  unsigned long regTimer = 500;
+  unsigned long regLastMillis = 0;
+  String flashDate = __DATE__;
+  String flashName = __FILE__; 
+
+
+  //Encoder vars
   long oldPosition1;
   long newPosition1;
   long actPosition1;
@@ -82,20 +95,7 @@
   double probe01Temp;
   double probe02Temp;
   double probe03Temp;
-  
-  uint8_t state;
-  bool lcdWasFlashed = false;
-  //bool runTempReg = false;
-  double settemp = 67;
-  bool enableSettempControl = true;
-  bool enableDirectPumpControl = true;
-  uint8_t pumpPWM;
-  int8_t pumpPercentage;
-  bool pumpIsOn = false;
-  int8_t power;
-  bool a = 0; //is for displaying a blinking 1 to let user know temp reg function is running as intended
-  unsigned long regTimer = 500;
-  unsigned long regLastMillis = 0;
+
   
   
   //////////////// PID PARAMETERS ////////////////
@@ -183,7 +183,7 @@
   
   //////////////// SETUP ////////////////
   void setup() {
-    Serial.begin(115200);
+    Serial.begin(9600);
     Serial.println("booting");
   
   
@@ -211,6 +211,12 @@
     Serial.print("Number of Devices found on oneWire bus = ");
     Serial.println(sensors.getDeviceCount());
 
+    String filename;
+    filename = flashName.substring(flashName.lastIndexOf('/')+1);
+
+    Serial.println(flashDate);
+    Serial.println(filename);
+
     Serial.print("state");   
     Serial.print(",\t");
     Serial.print("settemp");
@@ -227,12 +233,17 @@
     Serial.print(",\t");
     Serial.println("pumpPWM");
   
-    lcd.setCursor(0, 0);
-    // lcdprint(row, col, text)
-    lcd.print("State: ");
-    lcd.setCursor(7, 0);
-    lcd.print("booting");
-  
+
+    LcdPrint(0, 0, "booting");
+    delay(1000);
+    ClearLcdRow(0);
+    LcdPrint(0, 0, "Flash date");
+    LcdPrint(1, 0, flashDate);
+    LcdPrint(2, 0, "File Name");
+    LcdPrint(3,0,filename);
+    delay(2000);
+    lcd.clear();
+    
     lcd.setCursor(0, 1);
     lcd.print("T1: ");
     lcd.setCursor(4, 1);
@@ -265,6 +276,22 @@
   
       probe01Temp = getTemperature(probe01Address);
       probe02Temp = getTemperature(probe02Address);
+      probe03Temp = getTemperature(probe03Address);
+
+      if(probe03Temp > enclosureOvertemp) {
+        state = STANDBY_STATE;
+        SetAllDutCycles(0);
+        analogWrite(PUMP_PIN, 0);
+        lcd.clear();
+        LcdPrint(0, 0, "ENCLOSURE OVERTEMP");
+        LcdPrint(1, 0, "PLEASE REBOOT");
+        LcdPrint(2, 0, "Enc T: ");
+        lcd.setCursor(6, 2);
+        lcd.print(probe03Temp);
+        
+      }
+
+      
   
       lcd.setCursor(4, 1);
       lcd.print(probe01Temp, 1);
@@ -277,6 +304,7 @@
       sensors.requestTemperatures();
     }//temp read and control timer
 
+    
     //Log timer
     if (currentMillis - logLastMillis >= logTimer) {
       logLastMillis = currentMillis;
@@ -300,13 +328,13 @@
         
     }
     
+    
     //Main switch
     switch (state) {
       case STANDBY_STATE:
         if(!lcdWasFlashed) {
           ClearLcdForNewState();
-          lcd.setCursor(7, 0);
-          lcd.print("STANDBY");
+          LcdPrint(0,0, "STATE: STANDBY");
           lcd.setCursor(0, 2);
           lcd.print("Settemp: ");
           lcd.print(settemp, 1);
@@ -334,17 +362,17 @@
         runTempReg();
         break;
   
-      case MASH_IN_STATE:
+      case PAUSE_STATE:
         if(!lcdWasFlashed) {
           ClearLcdForNewState();
           lcd.setCursor(7, 0);
-          lcd.print("MASH IN");
+          lcd.print("PAUSE");
           pumpIsOn = false;
           analogWrite(PUMP_PIN, 0);
           lcdWasFlashed = true;
         }
         enableTempUI();
-        runTempReg();
+        enablePumpUI();
         break;
         
       case MASHING_STATE:
@@ -392,7 +420,7 @@
             lcd.print(power);
             lcd.print("%     ");       
           }
-          setAllDutCycles((double)power/100);
+          SetAllDutCycles((double)power/100);
 
           enablePumpUI();
           break;
